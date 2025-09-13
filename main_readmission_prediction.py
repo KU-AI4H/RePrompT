@@ -7,6 +7,10 @@ import pickle
 import requests
 import json
 import re
+import os
+
+from dotenv import load_dotenv
+load_dotenv()
 
 all_notes = []
 all_procedures = []
@@ -20,7 +24,10 @@ ndc9dr = InnerMap.load("NDC")
 
 
 def deepseek_inference(prompt):
-    api_key = "sk-6cbafc39afe7488cbfe1c8df5188b7ed"
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+
+    if api_key is None:
+        raise ValueError("DeepSeek API key environment variable is not set.")
 
     url = "https://api.deepseek.com/chat/completions"
 
