@@ -27,7 +27,7 @@ class NShotBinaryClassifier:
         "readmission_prediction": {
             "conditions_description": "The patient's conditions",
             "procedures_description": "The patient's procedures",
-            "drugs_hist_description": "The patient's drug history"
+            "drugs_description": "The patient's drug history"
         },
     }
 
@@ -73,7 +73,8 @@ class NShotBinaryClassifier:
     @staticmethod 
     def _format_patient_info(
         visits: list[dict],
-        features: dict[str, str]
+        features: dict[str, str],
+        include_label: bool = False
     ) -> str:
         """
         Format a patient's info for use in an LLM prompt.
@@ -99,10 +100,11 @@ class NShotBinaryClassifier:
         for key, value in features.items():
             patient_info += f"- {value}: {feature_dict[key][0]}\n"
 
-        patient_info += (
-            "\nRESPONSE:\n"
-            f"{visits[-1]['label']}\n\n"
-        )
+        if include_label:
+            patient_info += (
+                "\nRESPONSE:\n"
+                f"{visits[-1]['label']}\n\n"
+            )
 
         return patient_info
         
@@ -131,7 +133,7 @@ class NShotBinaryClassifier:
             for i, patient_visits in enumerate(example_visits):
                 example_patient_information += f"Example #{i + 1}\n"
                 example_patient_information += self._format_patient_info(
-                    patient_visits, selected_features
+                    patient_visits, selected_features, include_label=True
                 )
 
         prompt = self.prompt.format(
@@ -150,10 +152,14 @@ class NShotBinaryClassifier:
         Returns:
             out: The LLM's text completion.
         """
-        return self.llm_client.responses.create(
+        response = self.llm_client.responses.create(
             model=self.model_id,
             input=prompt
-        ).output[0].content[0].text
+        )
+        if self.model_id.startswith("gpt-5"):
+            return response.output[1].content[0].text
+        else:
+            return response.output[0].content[0].text
     
     @staticmethod
     def _aggregate_patient_visits(data: Subset | SampleEHRDataset) -> list:
@@ -202,7 +208,7 @@ class NShotBinaryClassifier:
         # Obtain a predicted label for each patient
         predicted_labels = [self._llm_inference(prompt) for prompt in prompts]
 
-        return predicted_labels
+        return predicted_labels, prompts
 
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
