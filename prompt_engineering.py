@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-from typing import Literal, TYPE_CHECKING, get_args
+from typing import Literal, get_args
 from pathlib import Path
 from collections import defaultdict
 from openai import OpenAI
 import os
 from pyhealth.datasets.sample_dataset import SampleEHRDataset
 from torch.utils.data import Subset
-
-
-if TYPE_CHECKING:
-    from pyhealth.datasets import EHRBaseDataset
 
 class NShotBinaryClassifier:
     """
@@ -39,7 +35,7 @@ class NShotBinaryClassifier:
         self,
         task: SupportedTask,
         n_shots: int = 0,
-        model_id: str = "gpt-4o"
+        model_id: str = "gpt-5"
     ):
         supported_tasks = get_args(self.SupportedTask)
         if task not in supported_tasks:
@@ -161,6 +157,14 @@ class NShotBinaryClassifier:
     
     @staticmethod
     def _aggregate_patient_visits(data: Subset | SampleEHRDataset) -> list:
+        """
+        Aggregate all visits by patient ID.
+
+        Args:
+            data: The visits to aggregate.
+        Returns:
+            A list of visits, each one containing all visits belonging to one patient.
+        """
         if isinstance(data, Subset):
             data = SampleEHRDataset(data)
         patient2index = data.patient_to_index
@@ -176,6 +180,16 @@ class NShotBinaryClassifier:
         patient_data: Subset | SampleEHRDataset,
         sample_data: Subset | SampleEHRDataset,
     ):
+        """
+        Generate a list of binary predictions using n-shot prompting.
+
+        Args:
+            patient_data: The data for which to perform class label predictions.
+            sample_data: The data to use for n-shot examples.
+        Returns:
+            A list of values between 0 and 1 denoting the likelihood of each sample
+            belonging to the 'true' class.
+        """
         sample_visits = self._aggregate_patient_visits(sample_data)
         sample_data = sample_visits[:self.n_shots]
 
@@ -188,7 +202,7 @@ class NShotBinaryClassifier:
         # Obtain a predicted label for each patient
         predicted_labels = [self._llm_inference(prompt) for prompt in prompts]
 
-        return predicted_labels, prompts
+        return predicted_labels
 
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
