@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import Literal, get_args
 from pathlib import Path
 from collections import defaultdict
-from openai import OpenAI
 import os
 from pyhealth.datasets.sample_dataset import SampleEHRDataset
 from torch.utils.data import Subset
+from inference import OpenAIInference
+from tqdm import tqdm
 
 class NShotBinaryClassifier:
     """
@@ -35,7 +36,8 @@ class NShotBinaryClassifier:
         self,
         task: SupportedTask,
         n_shots: int = 0,
-        model_id: str = "gpt-5"
+        model_id: str = "gpt-5",
+        log_path: str | Path = None
     ):
         supported_tasks = get_args(self.SupportedTask)
         if task not in supported_tasks:
@@ -47,15 +49,14 @@ class NShotBinaryClassifier:
         self.prompt = self._load_prompt_template(self.task)
         self.n_shots = n_shots
         self.model_id = model_id
+        self.log_path = Path(log_path) if log_path else None
 
         openai_api_key = os.getenv("OPENAI_API_KEY")
 
         if openai_api_key is None:
             raise ValueError("OpenAI API key environment variable is not set.")
 
-        self.llm_client = OpenAI(
-            api_key=openai_api_key
-        )
+        self.llm_client = OpenAIInference(api_key=openai_api_key, model=model_id)
 
     @staticmethod
     def _load_prompt_template(task: str) -> str:
@@ -85,25 +86,24 @@ class NShotBinaryClassifier:
         Returns:
             The features in a human-readable string format.
         """
-        feature_dict = defaultdict(list)
+        feature_dict = {}
         
-        for visit in visits:
-            for key, value in visit.items():
-                feature_dict[key].append(value)
+        for key, value in visits.items():
+            feature_dict[key] = value
 
         patient_info = (
-            f"The patient had {len(visits)} visits that occurred at "
-            f"{", ".join([str(i) for i in range(len(visits))])}.\n"
+            f"The patient had {len(visits['notes'])} visits that occurred at "
+            f"{", ".join([str(i) for i in range(len(visits['notes']))])}.\n"
             "Details of the features for each visit are as follows:\n"
         )
 
         for key, value in features.items():
-            patient_info += f"- {value}: {feature_dict[key][0]}\n"
+            patient_info += f"- {value}: {feature_dict[key]}\n"
 
         if include_label:
             patient_info += (
                 "\nRESPONSE:\n"
-                f"{visits[-1]['label']}\n\n"
+                f"{visits['label']}\n\n"
             )
 
         return patient_info
@@ -142,49 +142,13 @@ class NShotBinaryClassifier:
         )
 
         return prompt
-    
-    def _llm_inference(self, prompt: str) -> str:
-        """
-        Obtain an LLM completion.
-
-        Args:
-            prompt: The prompt to use for LLM inference.
-        Returns:
-            out: The LLM's text completion.
-        """
-        response = self.llm_client.responses.create(
-            model=self.model_id,
-            input=prompt
-        )
-        if self.model_id.startswith("gpt-5"):
-            return response.output[1].content[0].text
-        else:
-            return response.output[0].content[0].text
-    
-    @staticmethod
-    def _aggregate_patient_visits(data: Subset | SampleEHRDataset) -> list:
-        """
-        Aggregate all visits by patient ID.
-
-        Args:
-            data: The visits to aggregate.
-        Returns:
-            A list of visits, each one containing all visits belonging to one patient.
-        """
-        if isinstance(data, Subset):
-            data = SampleEHRDataset(data)
-        patient2index = data.patient_to_index
-        aggregated_visits = []
-        for patient in patient2index.keys():
-            patient_visit_indices = patient2index[patient]
-            patient_visits = [data[index] for index in patient_visit_indices]
-            aggregated_visits.append(patient_visits)
-        return aggregated_visits
 
     def forward(
         self,
         patient_data: Subset | SampleEHRDataset,
-        sample_data: Subset | SampleEHRDataset,
+        sample_data: Subset | SampleEHRDataset | None = None,
+        start_index: int | None = None,
+        label: str = "label"
     ):
         """
         Generate a list of binary predictions using n-shot prompting.
@@ -196,17 +160,37 @@ class NShotBinaryClassifier:
             A list of values between 0 and 1 denoting the likelihood of each sample
             belonging to the 'true' class.
         """
-        sample_visits = self._aggregate_patient_visits(sample_data)
-        sample_data = sample_visits[:self.n_shots]
-
-        visits_by_patient = self._aggregate_patient_visits(patient_data)
         prompts = [
-            self._format_prompt(patient_visits, sample_data)
-            for patient_visits in visits_by_patient
+            self._format_prompt(visit_samples, sample_data)
+            for visit_samples in patient_data
         ]
 
         # Obtain a predicted label for each patient
-        predicted_labels = [self._llm_inference(prompt) for prompt in prompts]
+        predicted_labels = []
+
+        # Optionally slice prompts and visits
+        if start_index is not None:
+            prompts = prompts[start_index:]
+            patient_data = [patient for i, patient in enumerate(patient_data) if i >= start_index]
+
+        for prompt, visits in tqdm(
+            zip(prompts, patient_data),
+            total=len(prompts),
+            unit="patient"
+        ):
+            predicted_label = self.llm_client.generate(prompt)
+            predicted_labels.append(predicted_label)
+
+            true_label = visits[label]
+
+            if self.log_path is not None:
+                with open(self.log_path, "a") as log_file:
+                    log_file.write(
+                        f"{visits['patient_id']},"
+                        f"{visits['visit_id']},"
+                        f"{predicted_label},"
+                        f"{true_label}\n"
+                    )
 
         return predicted_labels, prompts
 
