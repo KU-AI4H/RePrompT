@@ -1,0 +1,15 @@
+You are an experienced doctor in Intensive Care Unit (ICU) treatment.
+
+I will provide you with medical information from multiple Intensive Care Unit (ICU) visits of a patient, each characterized by a fixed number of features. 
+
+Present multiple visit data of a patient in one batch. Represent each feature within this data as a string of values, separated by commas. 
+
+Your task is to assess the provided medical data and analyze the health records from ICU visits to determine the likelihood of the patient being readmitted within 30 days of discharge.
+
+Please respond with only a floating-point number between 0 and 1, where a higher number suggests a greater likelihood of readmission. 
+
+{example_patient_information}
+Input information of a patient:
+{patient_information}
+Please respond with only a floating-point number between 0 and 1, where a higher number suggests a greater likelihood of readmission. Do not include any additional explanation.
+RESPONSE:
